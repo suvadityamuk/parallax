@@ -11,16 +11,38 @@ import { ChatPanel } from '../components/ChatPanel';
 import type { ViewMode } from '../services/signaling';
 import './Meeting.css';
 
+// ── Helpers ────────────────────────────────────────
+
+/** Returns a human-readable label for a ViewMode. */
+function modeLabel(mode: ViewMode): string {
+  return mode === '3d' ? '3D Splatting' : mode === 'anaglyph' ? 'Anaglyph 3D' : 'Normal';
+}
+
+/** Finds the video sender on a peer connection. */
+function getVideoSender(pc: RTCPeerConnection | null) {
+  return pc?.getSenders().find((s) => s.track?.kind === 'video');
+}
+
+// ── Component ──────────────────────────────────────
+
 export function Meeting() {
   const { meetingId } = useParams<{ meetingId: string }>();
   const navigate = useNavigate();
   const { user, preferences } = useAuth();
 
-  // Local media
+  // Refs
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const remoteVideoRef = useRef<HTMLVideoElement>(null);
   const localStreamRef = useRef<MediaStream | null>(null);
   const pcRef = useRef<RTCPeerConnection | null>(null);
+  const screenStreamRef = useRef<MediaStream | null>(null);
+  const chatOpenRef = useRef(false);
+  const iceRestartAttemptRef = useRef(0);
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const recordedChunksRef = useRef<Blob[]>([]);
+  const lowBwTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const MAX_ICE_RESTARTS = 3;
 
   // State
   const [isMuted, setIsMuted] = useState(false);
@@ -35,38 +57,25 @@ export function Meeting() {
   const [connectionState, setConnectionState] = useState<string>('new');
   const [iceServers, setIceServers] = useState<RTCIceServer[]>([]);
   const [gpuAvailable, setGpuAvailable] = useState(false);
-
-  // Screen sharing
   const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [remoteScreenSharing, setRemoteScreenSharing] = useState(false);
-  const screenStreamRef = useRef<MediaStream | null>(null);
-
-  // Chat
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [chatOpen, setChatOpen] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
-
-  // ICE restart
-  const iceRestartAttemptRef = useRef(0);
-  const MAX_ICE_RESTARTS = 3;
+  const [isRecording, setIsRecording] = useState(false);
 
   // Hooks
   const networkQuality = useNetworkQuality(pcRef.current);
   const { toasts, addToast, removeToast } = useToast();
   const { canvasRef: anaglyphCanvasRef, isProcessing: anaglyphProcessing, lastProcessingMs } =
-    useAnaglyph({
-      mode: currentMode,
-      localVideoRef,
-      glassesType: preferences.anaglyphType,
-    });
+    useAnaglyph({ mode: currentMode, localVideoRef, glassesType: preferences.anaglyphType });
   const {
-    scene: splatScene,
-    sceneVersion: splatVersion,
-    isLoading: splatLoading,
-    splatCount,
-    lastProcessingMs: splatProcessingMs,
-    fallbackReason: splatFallback,
+    scene: splatScene, sceneVersion: splatVersion, isLoading: splatLoading,
+    splatCount, lastProcessingMs: splatProcessingMs, fallbackReason: splatFallback,
   } = useSplat({ mode: currentMode, localVideoRef });
+
+  // Keep chatOpenRef in sync
+  useEffect(() => { chatOpenRef.current = chatOpen; }, [chatOpen]);
 
   // Apply volume to remote video
   useEffect(() => {
@@ -75,55 +84,30 @@ export function Meeting() {
     }
   }, [preferences.volumeLevel, remotePeer]);
 
-  // Auto-downgrade: if bandwidth drops below 500 Kbps for 5s while in anaglyph
-  const lowBandwidthTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // ── Auto-downgrade on low bandwidth ──────────
+  // Unified for both anaglyph and 3D — monitors the relevant threshold
   useEffect(() => {
-    if (currentMode !== 'anaglyph') {
-      if (lowBandwidthTimerRef.current) {
-        clearTimeout(lowBandwidthTimerRef.current);
-        lowBandwidthTimerRef.current = null;
-      }
+    const isEnhanced = currentMode === 'anaglyph' || currentMode === '3d';
+    const canSustain = currentMode === 'anaglyph' ? networkQuality.canAnaglyph : networkQuality.can3D;
+
+    if (!isEnhanced) {
+      if (lowBwTimerRef.current) { clearTimeout(lowBwTimerRef.current); lowBwTimerRef.current = null; }
       return;
     }
 
-    if (!networkQuality.canAnaglyph && !lowBandwidthTimerRef.current) {
+    if (!canSustain && !lowBwTimerRef.current) {
       addToast('⚠️ Low bandwidth — switching to Normal in 5s', 'warning', 5000);
-      lowBandwidthTimerRef.current = setTimeout(() => {
+      lowBwTimerRef.current = setTimeout(() => {
         setCurrentMode('normal');
         signaling.emit('set-mode', { mode: 'normal' });
         addToast('Switched to Normal mode due to low bandwidth', 'info', 3000);
-        lowBandwidthTimerRef.current = null;
+        lowBwTimerRef.current = null;
       }, 5000);
-    } else if (networkQuality.canAnaglyph && lowBandwidthTimerRef.current) {
-      clearTimeout(lowBandwidthTimerRef.current);
-      lowBandwidthTimerRef.current = null;
+    } else if (canSustain && lowBwTimerRef.current) {
+      clearTimeout(lowBwTimerRef.current);
+      lowBwTimerRef.current = null;
     }
-  }, [currentMode, networkQuality.canAnaglyph, addToast]);
-
-  // Auto-downgrade for 3D mode: bandwidth < 1.5 Mbps or extreme motion fallback
-  const lowBandwidth3dTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => {
-    if (currentMode !== '3d') {
-      if (lowBandwidth3dTimerRef.current) {
-        clearTimeout(lowBandwidth3dTimerRef.current);
-        lowBandwidth3dTimerRef.current = null;
-      }
-      return;
-    }
-
-    if (!networkQuality.can3D && !lowBandwidth3dTimerRef.current) {
-      addToast('⚠️ Low bandwidth — switching to Normal in 5s', 'warning', 5000);
-      lowBandwidth3dTimerRef.current = setTimeout(() => {
-        setCurrentMode('normal');
-        signaling.emit('set-mode', { mode: 'normal' });
-        addToast('Switched to Normal mode due to low bandwidth', 'info', 3000);
-        lowBandwidth3dTimerRef.current = null;
-      }, 5000);
-    } else if (networkQuality.can3D && lowBandwidth3dTimerRef.current) {
-      clearTimeout(lowBandwidth3dTimerRef.current);
-      lowBandwidth3dTimerRef.current = null;
-    }
-  }, [currentMode, networkQuality.can3D, addToast]);
+  }, [currentMode, networkQuality.canAnaglyph, networkQuality.can3D, addToast]);
 
   // Handle splat fallback (extreme motion)
   useEffect(() => {
@@ -134,7 +118,8 @@ export function Meeting() {
     }
   }, [splatFallback, currentMode, addToast]);
 
-  // Initialize local media
+  // ── Media & Peer Connection ──────────────────
+
   const initMedia = useCallback(async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -142,70 +127,13 @@ export function Meeting() {
         audio: { echoCancellation: true, noiseSuppression: true },
       });
       localStreamRef.current = stream;
-      if (localVideoRef.current) {
-        localVideoRef.current.srcObject = stream;
-      }
+      if (localVideoRef.current) localVideoRef.current.srcObject = stream;
     } catch (err) {
       console.error('Failed to get media:', err);
       addToast('Camera/mic access denied', 'warning');
     }
   }, [addToast]);
 
-  // Create peer connection
-  const createPeerConnection = useCallback(
-    (peerId: string) => {
-      const pc = new RTCPeerConnection({
-        iceServers: iceServers.length
-          ? iceServers
-          : [{ urls: 'stun:stun.l.google.com:19302' }],
-      });
-
-      pc.onicecandidate = (event) => {
-        if (event.candidate) {
-          signaling.emit('ice-candidate', {
-            to: peerId,
-            candidate: event.candidate.toJSON(),
-          });
-        }
-      };
-
-      pc.ontrack = (event) => {
-        if (remoteVideoRef.current && event.streams[0]) {
-          remoteVideoRef.current.srcObject = event.streams[0];
-          // Apply volume setting when track connects
-          remoteVideoRef.current.volume = preferences.volumeLevel / 100;
-        }
-      };
-
-      pc.onconnectionstatechange = () => {
-        setConnectionState(pc.connectionState);
-        if (pc.connectionState === 'failed') {
-          // Attempt ICE restart
-          if (iceRestartAttemptRef.current < MAX_ICE_RESTARTS) {
-            iceRestartAttemptRef.current++;
-            addToast(`Connection lost. Reconnecting (attempt ${iceRestartAttemptRef.current}/${MAX_ICE_RESTARTS})...`, 'warning', 4000);
-            attemptIceRestart(pc, peerId);
-          } else {
-            addToast('Connection lost. Could not reconnect.', 'warning');
-          }
-        } else if (pc.connectionState === 'connected') {
-          // Reset restart counter on successful connection
-          iceRestartAttemptRef.current = 0;
-        }
-      };
-
-      // Add local tracks
-      localStreamRef.current?.getTracks().forEach((track) => {
-        pc.addTrack(track, localStreamRef.current!);
-      });
-
-      pcRef.current = pc;
-      return pc;
-    },
-    [iceServers, addToast, preferences.volumeLevel]
-  );
-
-  // ICE restart
   const attemptIceRestart = useCallback(async (pc: RTCPeerConnection, peerId: string) => {
     try {
       const offer = await pc.createOffer({ iceRestart: true });
@@ -216,18 +144,52 @@ export function Meeting() {
     }
   }, []);
 
-  // Handle signaling
+  const createPeerConnection = useCallback((peerId: string) => {
+    const pc = new RTCPeerConnection({
+      iceServers: iceServers.length ? iceServers : [{ urls: 'stun:stun.l.google.com:19302' }],
+    });
+
+    pc.onicecandidate = (e) => {
+      if (e.candidate) signaling.emit('ice-candidate', { to: peerId, candidate: e.candidate.toJSON() });
+    };
+
+    pc.ontrack = (e) => {
+      if (remoteVideoRef.current && e.streams[0]) {
+        remoteVideoRef.current.srcObject = e.streams[0];
+        remoteVideoRef.current.volume = preferences.volumeLevel / 100;
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+      setConnectionState(pc.connectionState);
+      if (pc.connectionState === 'failed') {
+        if (iceRestartAttemptRef.current < MAX_ICE_RESTARTS) {
+          iceRestartAttemptRef.current++;
+          addToast(`Connection lost. Reconnecting (${iceRestartAttemptRef.current}/${MAX_ICE_RESTARTS})...`, 'warning', 4000);
+          attemptIceRestart(pc, peerId);
+        } else {
+          addToast('Connection lost. Could not reconnect.', 'warning');
+        }
+      } else if (pc.connectionState === 'connected') {
+        iceRestartAttemptRef.current = 0;
+      }
+    };
+
+    localStreamRef.current?.getTracks().forEach((track) => pc.addTrack(track, localStreamRef.current!));
+    pcRef.current = pc;
+    return pc;
+  }, [iceServers, addToast, preferences.volumeLevel, attemptIceRestart]);
+
+  // ── Signaling ────────────────────────────────
+
   useEffect(() => {
     if (!meetingId || !user) return;
-
     signaling.connect();
 
     signaling.on('room-joined', async (data) => {
       setIceServers(data.iceServers);
       setGpuAvailable(data.gpuAvailable ?? false);
-
       if (data.existingPeers.length > 0) {
-        // Join existing peer — create offer
         const peer = data.existingPeers[0];
         setRemotePeer(peer);
         const pc = createPeerConnection(peer.peerId);
@@ -237,19 +199,14 @@ export function Meeting() {
       }
     });
 
-    signaling.on('peer-joined', (data) => {
-      setRemotePeer(data);
-      addToast(`${data.displayName} joined`, 'info', 3000);
-    });
+    signaling.on('peer-joined', (data) => { setRemotePeer(data); addToast(`${data.displayName} joined`, 'info', 3000); });
 
-    signaling.on('peer-left', (_data) => {
+    signaling.on('peer-left', () => {
       setRemotePeer(null);
       setRemoteHandRaised(false);
       setRemoteScreenSharing(false);
       setRemoteMode('normal');
-      if (remoteVideoRef.current) {
-        remoteVideoRef.current.srcObject = null;
-      }
+      if (remoteVideoRef.current) remoteVideoRef.current.srcObject = null;
       pcRef.current?.close();
       pcRef.current = null;
       addToast('Peer left the meeting', 'info', 3000);
@@ -263,16 +220,10 @@ export function Meeting() {
       signaling.emit('answer', { to: data.from, sdp: answer });
     });
 
-    signaling.on('answer-received', async (data) => {
-      await pcRef.current?.setRemoteDescription(data.sdp);
-    });
+    signaling.on('answer-received', async (data) => { await pcRef.current?.setRemoteDescription(data.sdp); });
 
     signaling.on('ice-candidate-received', async (data) => {
-      try {
-        await pcRef.current?.addIceCandidate(data.candidate);
-      } catch (err) {
-        console.error('Failed to add ICE candidate:', err);
-      }
+      try { await pcRef.current?.addIceCandidate(data.candidate); } catch (err) { console.error('Failed to add ICE candidate:', err); }
     });
 
     signaling.on('peer-media-toggle', (data) => {
@@ -282,42 +233,24 @@ export function Meeting() {
 
     signaling.on('peer-hand-raised', (data) => {
       setRemoteHandRaised(data.raised);
-      if (data.raised) {
-        addToast('✋ Peer raised their hand', 'info', 4000);
-      }
+      if (data.raised) addToast('✋ Peer raised their hand', 'info', 4000);
     });
 
-    signaling.on('peer-mode-change', (data) => {
-      setRemoteMode(data.mode);
-      const modeLabel = data.mode === '3d' ? '3D Splatting' : data.mode === 'anaglyph' ? 'Anaglyph 3D' : 'Normal';
-      addToast(`Peer switched to ${modeLabel}`, 'info', 3000);
-    });
-
-    signaling.on('peer-screen-share', (data) => {
-      setRemoteScreenSharing(data.sharing);
-      addToast(data.sharing ? '🖥️ Peer started screen sharing' : 'Peer stopped screen sharing', 'info', 3000);
-    });
+    signaling.on('peer-mode-change', (data) => { setRemoteMode(data.mode); addToast(`Peer switched to ${modeLabel(data.mode)}`, 'info', 3000); });
+    signaling.on('peer-screen-share', (data) => { setRemoteScreenSharing(data.sharing); addToast(data.sharing ? '🖥️ Peer started screen sharing' : 'Peer stopped screen sharing', 'info', 3000); });
 
     signaling.on('peer-chat-message', (msg) => {
       setChatMessages((prev) => [...prev, msg]);
-      if (!chatOpen) {
+      if (!chatOpenRef.current) {
         setUnreadCount((prev) => prev + 1);
         addToast(`💬 ${msg.displayName}: ${msg.message.slice(0, 50)}`, 'info', 3000);
       }
     });
 
-    signaling.on('room-full', () => {
-      addToast('Meeting is full (max 2 participants)', 'warning');
-      setTimeout(() => navigate('/'), 3000);
-    });
+    signaling.on('room-full', () => { addToast('Meeting is full (max 2 participants)', 'warning'); setTimeout(() => navigate('/'), 3000); });
 
-    // Join room after media is ready
     initMedia().then(() => {
-      signaling.emit('join-room', {
-        meetingId,
-        displayName: user.displayName || 'Anonymous',
-        photoURL: user.photoURL || '',
-      });
+      signaling.emit('join-room', { meetingId, displayName: user.displayName || 'Anonymous', photoURL: user.photoURL || '' });
     });
 
     return () => {
@@ -329,105 +262,100 @@ export function Meeting() {
     };
   }, [meetingId, user, createPeerConnection, initMedia, addToast, navigate]);
 
-  // Controls
+  // ── Control handlers ─────────────────────────
+
   function toggleMute() {
-    const audioTrack = localStreamRef.current?.getAudioTracks()[0];
-    if (audioTrack) {
-      audioTrack.enabled = !audioTrack.enabled;
-      setIsMuted(!audioTrack.enabled);
-      signaling.emit('toggle-media', {
-        kind: 'audio',
-        enabled: audioTrack.enabled,
-      });
-    }
+    const track = localStreamRef.current?.getAudioTracks()[0];
+    if (!track) return;
+    track.enabled = !track.enabled;
+    setIsMuted(!track.enabled);
+    signaling.emit('toggle-media', { kind: 'audio', enabled: track.enabled });
   }
 
   function toggleCamera() {
-    const videoTrack = localStreamRef.current?.getVideoTracks()[0];
-    if (videoTrack) {
-      videoTrack.enabled = !videoTrack.enabled;
-      setIsCameraOff(!videoTrack.enabled);
-      signaling.emit('toggle-media', {
-        kind: 'video',
-        enabled: videoTrack.enabled,
-      });
-    }
+    const track = localStreamRef.current?.getVideoTracks()[0];
+    if (!track) return;
+    track.enabled = !track.enabled;
+    setIsCameraOff(!track.enabled);
+    signaling.emit('toggle-media', { kind: 'video', enabled: track.enabled });
   }
 
   function toggleHand() {
-    const newState = !handRaised;
-    setHandRaised(newState);
-    signaling.emit('raise-hand', { raised: newState });
+    setHandRaised((prev) => { signaling.emit('raise-hand', { raised: !prev }); return !prev; });
   }
 
-  // Screen sharing
   async function toggleScreenShare() {
     if (isScreenSharing) {
-      // Stop screen share — revert to camera
       screenStreamRef.current?.getTracks().forEach((t) => t.stop());
       screenStreamRef.current = null;
-
       const cameraTrack = localStreamRef.current?.getVideoTracks()[0];
-      if (cameraTrack) {
-        const sender = pcRef.current?.getSenders().find((s) => s.track?.kind === 'video');
-        if (sender) {
-          await sender.replaceTrack(cameraTrack);
-        }
-      }
-
+      if (cameraTrack) await getVideoSender(pcRef.current)?.replaceTrack(cameraTrack);
       setIsScreenSharing(false);
       signaling.emit('toggle-screen-share', { sharing: false });
     } else {
       try {
-        const screenStream = await navigator.mediaDevices.getDisplayMedia({
-          video: { width: 1920, height: 1080 },
-          audio: false,
-        });
-        screenStreamRef.current = screenStream;
-
-        const screenTrack = screenStream.getVideoTracks()[0];
-
-        // Replace the video track on the peer connection
-        const sender = pcRef.current?.getSenders().find((s) => s.track?.kind === 'video');
-        if (sender) {
-          await sender.replaceTrack(screenTrack);
-        }
-
-        // When user stops sharing via browser UI
-        screenTrack.onended = () => {
-          toggleScreenShare();
-        };
-
+        const stream = await navigator.mediaDevices.getDisplayMedia({ video: { width: 1920, height: 1080 }, audio: false });
+        screenStreamRef.current = stream;
+        const screenTrack = stream.getVideoTracks()[0];
+        await getVideoSender(pcRef.current)?.replaceTrack(screenTrack);
+        screenTrack.onended = () => toggleScreenShare();
         setIsScreenSharing(true);
         signaling.emit('toggle-screen-share', { sharing: true });
-      } catch (err) {
-        console.error('Screen share failed:', err);
+      } catch {
         addToast('Screen sharing cancelled', 'info', 2000);
       }
     }
   }
 
-  // Chat
   function sendChatMessage(message: string) {
-    if (!message.trim()) return;
-    signaling.emit('chat-message', { message: message.trim() });
-
-    // Add to local state immediately
-    const localMsg: ChatMessage = {
-      id: crypto.randomUUID(),
-      from: 'self',
-      displayName: user?.displayName || 'You',
-      message: message.trim(),
-      timestamp: Date.now(),
-    };
-    setChatMessages((prev) => [...prev, localMsg]);
+    const trimmed = message.trim();
+    if (!trimmed) return;
+    signaling.emit('chat-message', { message: trimmed });
+    setChatMessages((prev) => [...prev, {
+      id: crypto.randomUUID(), from: 'self',
+      displayName: user?.displayName || 'You', message: trimmed, timestamp: Date.now(),
+    }]);
   }
 
   function toggleChat() {
-    setChatOpen((prev) => {
-      if (!prev) setUnreadCount(0);
-      return !prev;
-    });
+    setChatOpen((prev) => { if (!prev) setUnreadCount(0); return !prev; });
+  }
+
+  function toggleRecording() {
+    if (isRecording) {
+      recorderRef.current?.stop();
+      setIsRecording(false);
+      return;
+    }
+
+    // Capture remote video + local audio into one stream
+    const remoteStream = remoteVideoRef.current?.srcObject as MediaStream | null;
+    const localAudio = localStreamRef.current?.getAudioTracks()[0];
+    if (!remoteStream) { addToast('No remote stream to record', 'warning', 2000); return; }
+
+    const tracks = [...remoteStream.getTracks()];
+    if (localAudio) tracks.push(localAudio);
+    const combined = new MediaStream(tracks);
+
+    const recorder = new MediaRecorder(combined, { mimeType: 'video/webm;codecs=vp9,opus' });
+    recordedChunksRef.current = [];
+
+    recorder.ondataavailable = (e) => { if (e.data.size > 0) recordedChunksRef.current.push(e.data); };
+    recorder.onstop = () => {
+      const blob = new Blob(recordedChunksRef.current, { type: 'video/webm' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `parallax-${meetingId}-${new Date().toISOString().slice(0, 16)}.webm`;
+      a.click();
+      URL.revokeObjectURL(url);
+      addToast('Recording saved!', 'success', 3000);
+    };
+
+    recorder.start(1000); // Chunk every second
+    recorderRef.current = recorder;
+    setIsRecording(true);
+    addToast('🔴 Recording started', 'info', 2000);
   }
 
   function changeMode(mode: ViewMode) {
@@ -437,105 +365,65 @@ export function Meeting() {
     signaling.emit('set-mode', { mode });
   }
 
-  function leaveMeeting() {
-    navigate('/');
-  }
-
   function copyMeetingLink() {
-    const link = window.location.href;
-    navigator.clipboard.writeText(link);
+    navigator.clipboard.writeText(window.location.href);
     addToast('Meeting link copied!', 'success', 2000);
   }
 
-  const participantCount = remotePeer ? 2 : 1;
+  // ── Remote video class list ──────────────────
+  const remoteVideoClass = [
+    !remoteVideoEnabled && 'video-hidden',
+    currentMode === 'anaglyph' && 'video-behind-anaglyph',
+    currentMode === '3d' && 'video-behind-splat',
+  ].filter(Boolean).join(' ');
+
+  // ── Render ───────────────────────────────────
 
   return (
     <div className="meeting">
-      {/* Toast container */}
+      {/* Toasts */}
       <div className="toast-container">
-        {toasts.map((toast) => (
-          <div
-            key={toast.id}
-            className={`toast ${toast.type}`}
-            onClick={() => removeToast(toast.id)}
-          >
-            {toast.message}
-          </div>
+        {toasts.map((t) => (
+          <div key={t.id} className={`toast ${t.type}`} onClick={() => removeToast(t.id)}>{t.message}</div>
         ))}
       </div>
 
-      {/* Top bar */}
+      {/* Header */}
       <header className="meeting-header">
         <div className="meeting-header-left">
           <span className="meeting-id">{meetingId}</span>
-          <button className="btn btn-secondary" onClick={copyMeetingLink} style={{ fontSize: '0.75rem', padding: '4px 12px' }}>
-            📋 Copy link
-          </button>
+          <button className="btn btn-secondary btn-xs" onClick={copyMeetingLink}>📋 Copy link</button>
           <span className={`connection-dot connection-dot--${connectionState === 'connected' ? 'good' : 'poor'}`} />
           {gpuAvailable && <span className="gpu-badge" title="GPU worker connected">⚡ GPU</span>}
         </div>
 
-        {/* Mode toggle */}
         <div className="mode-bar">
-          <button
-            className={`mode-btn ${currentMode === 'normal' ? 'active' : ''}`}
-            onClick={() => changeMode('normal')}
-          >
-            🎥 Normal
-          </button>
-          <button
-            className={`mode-btn ${currentMode === 'anaglyph' ? 'active' : ''}`}
-            onClick={() => changeMode('anaglyph')}
-            disabled={!networkQuality.canAnaglyph}
-            data-tooltip={`Requires 500 Kbps • Current: ${Math.round(networkQuality.bandwidth)} Kbps`}
-          >
-            👓 Anaglyph
-          </button>
-          <button
-            className={`mode-btn ${currentMode === '3d' ? 'active' : ''}`}
-            onClick={() => changeMode('3d')}
-            disabled={!networkQuality.can3D}
-            data-tooltip={`Requires 1.5 Mbps • Current: ${Math.round(networkQuality.bandwidth)} Kbps`}
-          >
-            🧊 3D
-          </button>
+          {(['normal', 'anaglyph', '3d'] as const).map((mode) => (
+            <button
+              key={mode}
+              className={`mode-btn ${currentMode === mode ? 'active' : ''}`}
+              onClick={() => changeMode(mode)}
+              disabled={mode === 'anaglyph' ? !networkQuality.canAnaglyph : mode === '3d' ? !networkQuality.can3D : false}
+            >
+              {mode === 'normal' ? '🎥 Normal' : mode === 'anaglyph' ? '👓 Anaglyph' : '🧊 3D'}
+            </button>
+          ))}
         </div>
 
         <div className="meeting-header-right">
-          <span className="network-badge" data-quality={networkQuality.label}>
-            {networkQuality.label}
-          </span>
+          <span className="network-badge" data-quality={networkQuality.label}>{networkQuality.label}</span>
         </div>
       </header>
 
-      {/* Video area */}
+      {/* Stage */}
       <main className="meeting-stage">
-        <div className="video-grid" data-count={participantCount}>
-          {/* Remote video (main) */}
+        <div className="video-grid" data-count={remotePeer ? 2 : 1}>
           {remotePeer ? (
             <div className="video-tile">
-              <video
-                ref={remoteVideoRef}
-                autoPlay
-                playsInline
-                className={`${!remoteVideoEnabled ? 'video-hidden' : ''} ${currentMode === 'anaglyph' ? 'video-behind-anaglyph' : ''} ${currentMode === '3d' ? 'video-behind-splat' : ''}`}
-              />
-              {/* Anaglyph canvas overlay */}
-              {currentMode === 'anaglyph' && (
-                <canvas
-                  ref={anaglyphCanvasRef}
-                  className="anaglyph-overlay"
-                />
-              )}
-              {/* 3D Splat viewer overlay */}
+              <video ref={remoteVideoRef} autoPlay playsInline className={remoteVideoClass} />
+              {currentMode === 'anaglyph' && <canvas ref={anaglyphCanvasRef} className="anaglyph-overlay" />}
               {currentMode === '3d' && (
-                <SplatViewer
-                  scene={splatScene}
-                  sceneVersion={splatVersion}
-                  isLoading={splatLoading}
-                  splatCount={splatCount}
-                  processingMs={splatProcessingMs}
-                />
+                <SplatViewer scene={splatScene} sceneVersion={splatVersion} isLoading={splatLoading} splatCount={splatCount} processingMs={splatProcessingMs} />
               )}
               {!remoteVideoEnabled && (
                 <div className="video-placeholder">
@@ -547,120 +435,59 @@ export function Meeting() {
                 {remoteHandRaised && <span>✋</span>}
                 {remoteScreenSharing && <span>🖥️</span>}
                 <span>{remotePeer.displayName}</span>
-                {remoteMode !== 'normal' && (
-                  <span className="remote-mode-badge">
-                    {remoteMode === 'anaglyph' ? '👓' : '🧊'}
-                  </span>
-                )}
-                {currentMode === 'anaglyph' && anaglyphProcessing && (
-                  <span className="anaglyph-badge" title={`Processing: ${lastProcessingMs}ms`}>👓 3D</span>
-                )}
-                {currentMode === '3d' && splatScene && (
-                  <span className="anaglyph-badge" title={`${splatCount} splats • ${splatProcessingMs.toFixed(0)}ms`}>🧊 3D</span>
-                )}
+                {remoteMode !== 'normal' && <span className="remote-mode-badge">{remoteMode === 'anaglyph' ? '👓' : '🧊'}</span>}
+                {currentMode === 'anaglyph' && anaglyphProcessing && <span className="anaglyph-badge" title={`${lastProcessingMs}ms`}>👓 3D</span>}
+                {currentMode === '3d' && splatScene && <span className="anaglyph-badge" title={`${splatCount} splats • ${splatProcessingMs.toFixed(0)}ms`}>🧊 3D</span>}
               </div>
             </div>
           ) : (
             <div className="video-tile video-tile--waiting">
               <div className="waiting-message">
-                <div className="waiting-dots">
-                  <span /><span /><span />
-                </div>
+                <div className="waiting-dots"><span /><span /><span /></div>
                 <p>Waiting for someone to join...</p>
-                <button className="btn btn-secondary" onClick={copyMeetingLink}>
-                  📋 Share meeting link
-                </button>
+                <button className="btn btn-secondary" onClick={copyMeetingLink}>📋 Share meeting link</button>
               </div>
             </div>
           )}
 
-          {/* Local video (when alone, full tile; when paired, PIP) */}
           {!remotePeer ? (
             <div className="video-tile">
-              <video
-                ref={localVideoRef}
-                autoPlay
-                playsInline
-                muted
-                style={{ transform: 'scaleX(-1)' }}
-              />
-              <div className="user-label">
-                <span>{user?.displayName} (You)</span>
-              </div>
+              <video ref={localVideoRef} autoPlay playsInline muted style={{ transform: 'scaleX(-1)' }} />
+              <div className="user-label"><span>{user?.displayName} (You)</span></div>
             </div>
           ) : (
             <div className="self-view-floating">
-              <video
-                ref={localVideoRef}
-                autoPlay
-                playsInline
-                muted
-              />
-              {isScreenSharing && (
-                <div className="screen-share-indicator">🖥️ Sharing</div>
-              )}
+              <video ref={localVideoRef} autoPlay playsInline muted />
+              {isScreenSharing && <div className="screen-share-indicator">🖥️ Sharing</div>}
             </div>
           )}
         </div>
 
-        {/* Chat panel */}
-        <ChatPanel
-          isOpen={chatOpen}
-          messages={chatMessages}
-          onSend={sendChatMessage}
-          onClose={toggleChat}
-        />
+        <ChatPanel isOpen={chatOpen} messages={chatMessages} onSend={sendChatMessage} onClose={toggleChat} />
       </main>
 
-      {/* Controls bar */}
+      {/* Controls */}
       <footer className="controls-bar">
-        <button
-          className={`btn btn-icon btn-secondary ${isMuted ? 'active' : ''}`}
-          onClick={toggleMute}
-          title={isMuted ? 'Unmute' : 'Mute'}
-        >
+        <button className={`btn btn-icon btn-secondary ${isMuted ? 'active' : ''}`} onClick={toggleMute} title={isMuted ? 'Unmute' : 'Mute'}>
           {isMuted ? '🔇' : '🎤'}
         </button>
-        <button
-          className={`btn btn-icon btn-secondary ${isCameraOff ? 'active' : ''}`}
-          onClick={toggleCamera}
-          title={isCameraOff ? 'Turn on camera' : 'Turn off camera'}
-        >
+        <button className={`btn btn-icon btn-secondary ${isCameraOff ? 'active' : ''}`} onClick={toggleCamera} title={isCameraOff ? 'Camera on' : 'Camera off'}>
           {isCameraOff ? '📷' : '📹'}
         </button>
-        <button
-          className={`btn btn-icon btn-secondary ${isScreenSharing ? 'active' : ''}`}
-          onClick={toggleScreenShare}
-          title={isScreenSharing ? 'Stop sharing' : 'Share screen'}
-          style={isScreenSharing ? { background: 'var(--accent-info)' } : {}}
-        >
+        <button className={`btn btn-icon btn-secondary ${isScreenSharing ? 'btn-active-info' : ''}`} onClick={toggleScreenShare} title={isScreenSharing ? 'Stop sharing' : 'Share screen'}>
           🖥️
         </button>
-        <button
-          className={`btn btn-icon btn-secondary ${handRaised ? 'active' : ''}`}
-          onClick={toggleHand}
-          title={handRaised ? 'Lower hand' : 'Raise hand'}
-          style={handRaised ? { background: 'var(--accent-warning)' } : {}}
-        >
+        <button className={`btn btn-icon btn-secondary ${handRaised ? 'btn-active-warning' : ''}`} onClick={toggleHand} title={handRaised ? 'Lower hand' : 'Raise hand'}>
           ✋
         </button>
-        <button
-          className={`btn btn-icon btn-secondary ${chatOpen ? 'active' : ''}`}
-          onClick={toggleChat}
-          title="Chat"
-          style={{ position: 'relative' }}
-        >
+        <button className={`btn btn-icon btn-secondary ${chatOpen ? 'active' : ''} btn-relative`} onClick={toggleChat} title="Chat">
           💬
-          {unreadCount > 0 && (
-            <span className="chat-unread-badge">{unreadCount}</span>
-          )}
+          {unreadCount > 0 && <span className="chat-unread-badge">{unreadCount}</span>}
         </button>
-        <button
-          className="btn btn-danger btn-icon"
-          onClick={leaveMeeting}
-          title="Leave meeting"
-          style={{ width: '56px', borderRadius: 'var(--radius-pill)' }}
-        >
+        <button className={`btn btn-icon btn-secondary ${isRecording ? 'btn-active-danger' : ''}`} onClick={toggleRecording} title={isRecording ? 'Stop recording' : 'Record'}>
+          {isRecording ? '⏹️' : '⏺️'}
+        </button>
+        <button className="btn btn-danger btn-icon btn-leave" onClick={() => navigate('/')} title="Leave meeting">
           📞
         </button>
       </footer>

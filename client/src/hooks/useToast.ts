@@ -1,7 +1,5 @@
 import { useState, useCallback } from 'react';
 
-export type ViewMode = 'normal' | 'anaglyph' | '3d';
-
 export interface ToastMessage {
   id: string;
   message: string;

@@ -48,9 +48,23 @@ def init():
     if config.DEPTH_BACKEND == "midas":
         _load_midas()
     elif config.DEPTH_BACKEND == "flashdepth":
-        # FlashDepth integration placeholder — requires separate install
+        # FlashDepth — GPU-accelerated monocular depth (CUDA required)
+        #
+        # To enable:
+        #   1. pip install flash-depth   (or install from source)
+        #   2. Download the model weights from the FlashDepth repo
+        #   3. Set DEPTH_BACKEND=flashdepth in your .env
+        #
+        # See: https://github.com/prs-eth/FlashDepth
+        #
+        # TODO: Integrate FlashDepth model loading here. Expected API:
+        #   from flash_depth import FlashDepthEstimator
+        #   _model = FlashDepthEstimator.from_pretrained("flashdepth-v1")
+        #   _model.to(_device).eval()
         raise NotImplementedError(
-            "FlashDepth backend not yet integrated. Use DEPTH_BACKEND=midas for now."
+            "FlashDepth backend not yet integrated. "
+            "Install flash-depth and implement _load_flashdepth() in this file. "
+            "Fallback: set DEPTH_BACKEND=midas in your .env."
         )
     else:
         raise ValueError(f"Unknown depth backend: {config.DEPTH_BACKEND}")
