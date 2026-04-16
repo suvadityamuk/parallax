@@ -10,6 +10,14 @@ export interface PeerInfo {
   photoURL: string;
 }
 
+export interface ChatMessage {
+  id: string;
+  from: string;
+  displayName: string;
+  message: string;
+  timestamp: number;
+}
+
 export interface SignalingEvents {
   // Emitted
   'join-room': (data: {
@@ -30,12 +38,34 @@ export interface SignalingEvents {
     enabled: boolean;
   }) => void;
   'raise-hand': (data: { raised: boolean }) => void;
+  'toggle-screen-share': (data: { sharing: boolean }) => void;
+  'chat-message': (data: { message: string }) => void;
+
+  // Anaglyph pipeline
+  'anaglyph-frame': (data: { frame: string; glassesType: string }) => void;
+  'anaglyph-result': (data: { from: string; frame: string; processingMs: number }) => void;
+  'anaglyph-error': (data: { message: string }) => void;
+
+  // Splat pipeline
+  'splat-frame': (data: { frame: string }) => void;
+  'splat-result': (data: {
+    from: string;
+    type: 'keyframe' | 'delta';
+    splats: any; // eslint-disable-line @typescript-eslint/no-explicit-any -- typed at consumption site
+    splatCount: number;
+    fgRatio: number;
+    changedCount?: number;
+    processingMs: number;
+  }) => void;
+  'splat-fallback': (data: { from: string; reason: string; bgFlow: number }) => void;
+  'splat-error': (data: { message: string }) => void;
 
   // Received
   'room-joined': (data: {
     peerId: string;
     existingPeers: PeerInfo[];
     iceServers: RTCIceServer[];
+    gpuAvailable?: boolean;
   }) => void;
   'peer-joined': (data: PeerInfo) => void;
   'peer-left': (data: { peerId: string }) => void;
@@ -60,6 +90,15 @@ export interface SignalingEvents {
     peerId: string;
     raised: boolean;
   }) => void;
+  'peer-mode-change': (data: {
+    peerId: string;
+    mode: ViewMode;
+  }) => void;
+  'peer-screen-share': (data: {
+    peerId: string;
+    sharing: boolean;
+  }) => void;
+  'peer-chat-message': (data: ChatMessage) => void;
   'room-full': () => void;
   error: (data: { message: string }) => void;
 }

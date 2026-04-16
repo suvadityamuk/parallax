@@ -57,7 +57,7 @@ export function useAnaglyph({ mode, localVideoRef, glassesType }: UseAnaglyphOpt
     const dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
     const base64 = dataUrl.split(',')[1];
 
-    signaling.emit('anaglyph-frame' as any, {
+    signaling.emit('anaglyph-frame', {
       frame: base64,
       glassesType,
     });
@@ -100,12 +100,12 @@ export function useAnaglyph({ mode, localVideoRef, glassesType }: UseAnaglyphOpt
       setIsProcessing(false);
     };
 
-    signaling.on('anaglyph-result' as any, handleResult as any);
-    signaling.on('anaglyph-error' as any, handleError as any);
+    signaling.on('anaglyph-result', handleResult);
+    signaling.on('anaglyph-error', handleError);
 
     return () => {
-      signaling.off('anaglyph-result' as any, handleResult as any);
-      signaling.off('anaglyph-error' as any, handleError as any);
+      signaling.off('anaglyph-result', handleResult);
+      signaling.off('anaglyph-error', handleError);
     };
   }, []);
 

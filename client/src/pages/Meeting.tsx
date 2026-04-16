@@ -1,12 +1,13 @@
 import { useParams, useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { useEffect, useRef, useState, useCallback } from 'react';
-import { signaling, type PeerInfo } from '../services/signaling';
+import { signaling, type PeerInfo, type ChatMessage } from '../services/signaling';
 import { useNetworkQuality } from '../hooks/useNetworkQuality';
 import { useToast } from '../hooks/useToast';
 import { useAnaglyph } from '../hooks/useAnaglyph';
 import { useSplat } from '../hooks/useSplat';
 import { SplatViewer } from '../components/SplatViewer';
+import { ChatPanel } from '../components/ChatPanel';
 import type { ViewMode } from '../services/signaling';
 import './Meeting.css';
 
@@ -30,8 +31,24 @@ export function Meeting() {
   const [remoteAudioEnabled, setRemoteAudioEnabled] = useState(true);
   const [remoteVideoEnabled, setRemoteVideoEnabled] = useState(true);
   const [currentMode, setCurrentMode] = useState<ViewMode>(preferences.defaultMode);
+  const [remoteMode, setRemoteMode] = useState<ViewMode>('normal');
   const [connectionState, setConnectionState] = useState<string>('new');
   const [iceServers, setIceServers] = useState<RTCIceServer[]>([]);
+  const [gpuAvailable, setGpuAvailable] = useState(false);
+
+  // Screen sharing
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
+  const [remoteScreenSharing, setRemoteScreenSharing] = useState(false);
+  const screenStreamRef = useRef<MediaStream | null>(null);
+
+  // Chat
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
+  const [chatOpen, setChatOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  // ICE restart
+  const iceRestartAttemptRef = useRef(0);
+  const MAX_ICE_RESTARTS = 3;
 
   // Hooks
   const networkQuality = useNetworkQuality(pcRef.current);
@@ -50,6 +67,13 @@ export function Meeting() {
     lastProcessingMs: splatProcessingMs,
     fallbackReason: splatFallback,
   } = useSplat({ mode: currentMode, localVideoRef });
+
+  // Apply volume to remote video
+  useEffect(() => {
+    if (remoteVideoRef.current) {
+      remoteVideoRef.current.volume = preferences.volumeLevel / 100;
+    }
+  }, [preferences.volumeLevel, remotePeer]);
 
   // Auto-downgrade: if bandwidth drops below 500 Kbps for 5s while in anaglyph
   const lowBandwidthTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -148,13 +172,25 @@ export function Meeting() {
       pc.ontrack = (event) => {
         if (remoteVideoRef.current && event.streams[0]) {
           remoteVideoRef.current.srcObject = event.streams[0];
+          // Apply volume setting when track connects
+          remoteVideoRef.current.volume = preferences.volumeLevel / 100;
         }
       };
 
       pc.onconnectionstatechange = () => {
         setConnectionState(pc.connectionState);
         if (pc.connectionState === 'failed') {
-          addToast('Connection lost. Attempting to reconnect...', 'warning');
+          // Attempt ICE restart
+          if (iceRestartAttemptRef.current < MAX_ICE_RESTARTS) {
+            iceRestartAttemptRef.current++;
+            addToast(`Connection lost. Reconnecting (attempt ${iceRestartAttemptRef.current}/${MAX_ICE_RESTARTS})...`, 'warning', 4000);
+            attemptIceRestart(pc, peerId);
+          } else {
+            addToast('Connection lost. Could not reconnect.', 'warning');
+          }
+        } else if (pc.connectionState === 'connected') {
+          // Reset restart counter on successful connection
+          iceRestartAttemptRef.current = 0;
         }
       };
 
@@ -166,8 +202,19 @@ export function Meeting() {
       pcRef.current = pc;
       return pc;
     },
-    [iceServers, addToast]
+    [iceServers, addToast, preferences.volumeLevel]
   );
+
+  // ICE restart
+  const attemptIceRestart = useCallback(async (pc: RTCPeerConnection, peerId: string) => {
+    try {
+      const offer = await pc.createOffer({ iceRestart: true });
+      await pc.setLocalDescription(offer);
+      signaling.emit('offer', { to: peerId, sdp: offer });
+    } catch (err) {
+      console.error('ICE restart failed:', err);
+    }
+  }, []);
 
   // Handle signaling
   useEffect(() => {
@@ -177,6 +224,7 @@ export function Meeting() {
 
     signaling.on('room-joined', async (data) => {
       setIceServers(data.iceServers);
+      setGpuAvailable(data.gpuAvailable ?? false);
 
       if (data.existingPeers.length > 0) {
         // Join existing peer — create offer
@@ -197,6 +245,8 @@ export function Meeting() {
     signaling.on('peer-left', (_data) => {
       setRemotePeer(null);
       setRemoteHandRaised(false);
+      setRemoteScreenSharing(false);
+      setRemoteMode('normal');
       if (remoteVideoRef.current) {
         remoteVideoRef.current.srcObject = null;
       }
@@ -237,6 +287,25 @@ export function Meeting() {
       }
     });
 
+    signaling.on('peer-mode-change', (data) => {
+      setRemoteMode(data.mode);
+      const modeLabel = data.mode === '3d' ? '3D Splatting' : data.mode === 'anaglyph' ? 'Anaglyph 3D' : 'Normal';
+      addToast(`Peer switched to ${modeLabel}`, 'info', 3000);
+    });
+
+    signaling.on('peer-screen-share', (data) => {
+      setRemoteScreenSharing(data.sharing);
+      addToast(data.sharing ? '🖥️ Peer started screen sharing' : 'Peer stopped screen sharing', 'info', 3000);
+    });
+
+    signaling.on('peer-chat-message', (msg) => {
+      setChatMessages((prev) => [...prev, msg]);
+      if (!chatOpen) {
+        setUnreadCount((prev) => prev + 1);
+        addToast(`💬 ${msg.displayName}: ${msg.message.slice(0, 50)}`, 'info', 3000);
+      }
+    });
+
     signaling.on('room-full', () => {
       addToast('Meeting is full (max 2 participants)', 'warning');
       setTimeout(() => navigate('/'), 3000);
@@ -256,6 +325,7 @@ export function Meeting() {
       signaling.disconnect();
       pcRef.current?.close();
       localStreamRef.current?.getTracks().forEach((t) => t.stop());
+      screenStreamRef.current?.getTracks().forEach((t) => t.stop());
     };
   }, [meetingId, user, createPeerConnection, initMedia, addToast, navigate]);
 
@@ -288,6 +358,76 @@ export function Meeting() {
     const newState = !handRaised;
     setHandRaised(newState);
     signaling.emit('raise-hand', { raised: newState });
+  }
+
+  // Screen sharing
+  async function toggleScreenShare() {
+    if (isScreenSharing) {
+      // Stop screen share — revert to camera
+      screenStreamRef.current?.getTracks().forEach((t) => t.stop());
+      screenStreamRef.current = null;
+
+      const cameraTrack = localStreamRef.current?.getVideoTracks()[0];
+      if (cameraTrack) {
+        const sender = pcRef.current?.getSenders().find((s) => s.track?.kind === 'video');
+        if (sender) {
+          await sender.replaceTrack(cameraTrack);
+        }
+      }
+
+      setIsScreenSharing(false);
+      signaling.emit('toggle-screen-share', { sharing: false });
+    } else {
+      try {
+        const screenStream = await navigator.mediaDevices.getDisplayMedia({
+          video: { width: 1920, height: 1080 },
+          audio: false,
+        });
+        screenStreamRef.current = screenStream;
+
+        const screenTrack = screenStream.getVideoTracks()[0];
+
+        // Replace the video track on the peer connection
+        const sender = pcRef.current?.getSenders().find((s) => s.track?.kind === 'video');
+        if (sender) {
+          await sender.replaceTrack(screenTrack);
+        }
+
+        // When user stops sharing via browser UI
+        screenTrack.onended = () => {
+          toggleScreenShare();
+        };
+
+        setIsScreenSharing(true);
+        signaling.emit('toggle-screen-share', { sharing: true });
+      } catch (err) {
+        console.error('Screen share failed:', err);
+        addToast('Screen sharing cancelled', 'info', 2000);
+      }
+    }
+  }
+
+  // Chat
+  function sendChatMessage(message: string) {
+    if (!message.trim()) return;
+    signaling.emit('chat-message', { message: message.trim() });
+
+    // Add to local state immediately
+    const localMsg: ChatMessage = {
+      id: crypto.randomUUID(),
+      from: 'self',
+      displayName: user?.displayName || 'You',
+      message: message.trim(),
+      timestamp: Date.now(),
+    };
+    setChatMessages((prev) => [...prev, localMsg]);
+  }
+
+  function toggleChat() {
+    setChatOpen((prev) => {
+      if (!prev) setUnreadCount(0);
+      return !prev;
+    });
   }
 
   function changeMode(mode: ViewMode) {
@@ -332,6 +472,7 @@ export function Meeting() {
             📋 Copy link
           </button>
           <span className={`connection-dot connection-dot--${connectionState === 'connected' ? 'good' : 'poor'}`} />
+          {gpuAvailable && <span className="gpu-badge" title="GPU worker connected">⚡ GPU</span>}
         </div>
 
         {/* Mode toggle */}
@@ -404,7 +545,13 @@ export function Meeting() {
               <div className="user-label">
                 {!remoteAudioEnabled && <span>🔇</span>}
                 {remoteHandRaised && <span>✋</span>}
+                {remoteScreenSharing && <span>🖥️</span>}
                 <span>{remotePeer.displayName}</span>
+                {remoteMode !== 'normal' && (
+                  <span className="remote-mode-badge">
+                    {remoteMode === 'anaglyph' ? '👓' : '🧊'}
+                  </span>
+                )}
                 {currentMode === 'anaglyph' && anaglyphProcessing && (
                   <span className="anaglyph-badge" title={`Processing: ${lastProcessingMs}ms`}>👓 3D</span>
                 )}
@@ -449,9 +596,20 @@ export function Meeting() {
                 playsInline
                 muted
               />
+              {isScreenSharing && (
+                <div className="screen-share-indicator">🖥️ Sharing</div>
+              )}
             </div>
           )}
         </div>
+
+        {/* Chat panel */}
+        <ChatPanel
+          isOpen={chatOpen}
+          messages={chatMessages}
+          onSend={sendChatMessage}
+          onClose={toggleChat}
+        />
       </main>
 
       {/* Controls bar */}
@@ -471,12 +629,31 @@ export function Meeting() {
           {isCameraOff ? '📷' : '📹'}
         </button>
         <button
+          className={`btn btn-icon btn-secondary ${isScreenSharing ? 'active' : ''}`}
+          onClick={toggleScreenShare}
+          title={isScreenSharing ? 'Stop sharing' : 'Share screen'}
+          style={isScreenSharing ? { background: 'var(--accent-info)' } : {}}
+        >
+          🖥️
+        </button>
+        <button
           className={`btn btn-icon btn-secondary ${handRaised ? 'active' : ''}`}
           onClick={toggleHand}
           title={handRaised ? 'Lower hand' : 'Raise hand'}
           style={handRaised ? { background: 'var(--accent-warning)' } : {}}
         >
           ✋
+        </button>
+        <button
+          className={`btn btn-icon btn-secondary ${chatOpen ? 'active' : ''}`}
+          onClick={toggleChat}
+          title="Chat"
+          style={{ position: 'relative' }}
+        >
+          💬
+          {unreadCount > 0 && (
+            <span className="chat-unread-badge">{unreadCount}</span>
+          )}
         </button>
         <button
           className="btn btn-danger btn-icon"

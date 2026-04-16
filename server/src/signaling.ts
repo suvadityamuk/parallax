@@ -1,4 +1,5 @@
 import type { Server, Socket } from 'socket.io';
+import { v4 as uuidv4 } from 'uuid';
 import { processFrame, generateSplats, resetSplats, checkGpuHealth } from './gpu-proxy.js';
 
 interface PeerInfo {
@@ -41,7 +42,7 @@ function getIceServers(): RTCIceServer[] {
 
 export function handleSocket(io: Server, socket: Socket) {
   // ── Join room ──────────────────────────────
-  socket.on('join-room', (data: {
+  socket.on('join-room', async (data: {
     meetingId: string;
     displayName: string;
     photoURL: string;
@@ -77,11 +78,15 @@ export function handleSocket(io: Server, socket: Socket) {
 
     console.log(`[Room ${meetingId}] ${displayName} joined (${currentRoom.size}/2)`);
 
+    // Check GPU worker availability
+    const gpuAvailable = await checkGpuHealth();
+
     // Send room info to joiner
     socket.emit('room-joined', {
       peerId: socket.id,
       existingPeers,
       iceServers: getIceServers(),
+      gpuAvailable,
     });
 
     // Notify existing peers
@@ -134,6 +139,34 @@ export function handleSocket(io: Server, socket: Socket) {
         raised: data.raised,
       });
     }
+  });
+
+  // ── Screen sharing ────────────────────────────
+  socket.on('toggle-screen-share', (data: { sharing: boolean }) => {
+    const meetingId = socketToRoom.get(socket.id);
+    if (meetingId) {
+      socket.to(meetingId).emit('peer-screen-share', {
+        peerId: socket.id,
+        sharing: data.sharing,
+      });
+    }
+  });
+
+  // ── Chat messages ─────────────────────────────
+  socket.on('chat-message', (data: { message: string }) => {
+    const meetingId = socketToRoom.get(socket.id);
+    if (!meetingId) return;
+
+    const room = rooms.get(meetingId);
+    const peerInfo = room?.get(socket.id);
+
+    socket.to(meetingId).emit('peer-chat-message', {
+      id: uuidv4(),
+      from: socket.id,
+      displayName: peerInfo?.displayName || 'Unknown',
+      message: data.message,
+      timestamp: Date.now(),
+    });
   });
 
   // ── Mode change ────────────────────────────

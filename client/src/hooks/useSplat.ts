@@ -81,7 +81,7 @@ export function useSplat({ mode, localVideoRef }: UseSplatOptions) {
     const dataUrl = canvas.toDataURL('image/jpeg', JPEG_QUALITY);
     const base64 = dataUrl.split(',')[1];
 
-    signaling.emit('splat-frame' as any, { frame: base64 });
+    signaling.emit('splat-frame', { frame: base64 });
   }, [localVideoRef, getOrCreateCaptureCanvas]);
 
   // Start/stop capture loop
@@ -176,14 +176,14 @@ export function useSplat({ mode, localVideoRef }: UseSplatOptions) {
       setIsLoading(false);
     };
 
-    signaling.on('splat-result' as any, handleResult as any);
-    signaling.on('splat-fallback' as any, handleFallback as any);
-    signaling.on('splat-error' as any, handleError as any);
+    signaling.on('splat-result', handleResult);
+    signaling.on('splat-fallback', handleFallback);
+    signaling.on('splat-error', handleError);
 
     return () => {
-      signaling.off('splat-result' as any, handleResult as any);
-      signaling.off('splat-fallback' as any, handleFallback as any);
-      signaling.off('splat-error' as any, handleError as any);
+      signaling.off('splat-result', handleResult);
+      signaling.off('splat-fallback', handleFallback);
+      signaling.off('splat-error', handleError);
     };
   }, []);
 

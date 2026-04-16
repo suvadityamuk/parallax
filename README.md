@@ -6,6 +6,7 @@ Real-time 3D video meetings with WebRTC, anaglyph stereo, and Gaussian splatting
 
 ### Prerequisites
 - Node.js 22+
+- Python 3.11+ (for GPU worker, optional)
 - A Firebase project with Auth and Firestore enabled
 
 ### 1. Clone and install
@@ -27,6 +28,11 @@ cp client/.env.example client/.env
 cp server/.env.example server/.env
 ```
 
+**GPU Worker** (optional) — copy and adjust depth settings:
+```bash
+cp gpu-worker/.env.example gpu-worker/.env
+```
+
 ### 3. Firebase Setup
 
 1. Go to [Firebase Console](https://console.firebase.google.com/) and create a project
@@ -38,12 +44,17 @@ cp server/.env.example server/.env
 ### 4. Run locally
 
 ```bash
+# Client + Server only (no GPU features)
 npm run dev
+
+# Full stack including GPU worker
+npm run dev:all
 ```
 
-This starts both:
+This starts:
 - **Client** at `http://localhost:3000`
 - **Server** at `http://localhost:4000`
+- **GPU Worker** at `http://localhost:8000` (with `dev:all`)
 
 ### 5. Create a meeting
 
@@ -57,53 +68,89 @@ This starts both:
 parallax/
 ├── client/                 # React + Vite frontend
 │   ├── src/
-│   │   ├── components/     # Reusable UI components
-│   │   ├── contexts/       # React contexts (Auth)
-│   │   ├── hooks/          # Custom hooks (network quality, toasts)
+│   │   ├── components/     # ChatPanel, SplatViewer, ProtectedRoute
+│   │   ├── contexts/       # React contexts (Auth + Preferences)
+│   │   ├── hooks/          # useAnaglyph, useSplat, useNetworkQuality, useToast
 │   │   ├── lib/            # Firebase config
-│   │   ├── pages/          # Landing, Meeting
-│   │   ├── services/       # Signaling service
-│   │   └── styles/         # CSS design system
+│   │   ├── pages/          # Landing, Meeting, Settings
+│   │   ├── services/       # Signaling service (Socket.io)
+│   │   ├── styles/         # CSS design system
+│   │   └── __tests__/      # Unit tests
 │   ├── Dockerfile
 │   └── nginx.conf
 ├── server/                 # Node.js signaling server
 │   ├── src/
 │   │   ├── index.ts        # Express + Socket.io entry
-│   │   └── signaling.ts    # Room management, WebRTC relay
+│   │   ├── signaling.ts    # Room management, WebRTC relay, chat, screen share
+│   │   ├── gpu-proxy.ts    # GPU worker HTTP proxy
+│   │   └── __tests__/      # Integration tests
+│   └── Dockerfile
+├── gpu-worker/             # Python GPU worker (FastAPI)
+│   ├── src/
+│   │   ├── main.py         # FastAPI app (endpoints)
+│   │   ├── depth.py        # MiDaS depth estimation
+│   │   ├── anaglyph.py     # DIBR warp + Dubois compositing
+│   │   ├── segmentation.py # MediaPipe selfie segmentation
+│   │   ├── optical_flow.py # Farneback motion detection
+│   │   ├── splat_generator.py # 3DGS pipeline
+│   │   └── config.py       # Environment configuration
+│   ├── tests/              # pytest unit tests
 │   └── Dockerfile
 ├── infra/
 │   └── coturn/             # TURN server config
+├── .github/workflows/      # CI pipeline
+├── docker-compose.yml      # Full-stack orchestration
+├── firebase.json           # Firebase Hosting config
 └── package.json            # Monorepo root
 ```
 
-## Viewing Modes
+## Features
 
-| Mode | Status | Description |
+| Feature | Status | Description |
 |---|---|---|
-| 🎥 **Normal** | ✅ Ready | Standard 2D WebRTC video |
-| 👓 **Anaglyph** | 🚧 Phase 2 | Server-side depth → stereo 3D (4 glasses types) |
-| 🧊 **3D** | 🚧 Phase 3 | Live Gaussian Splatting (±30° free viewpoint) |
+| 🎥 **HD Video** | ✅ Ready | WebRTC peer-to-peer video with ICE restart |
+| 👓 **Anaglyph 3D** | ✅ Ready | Server-side depth → stereo 3D (4 glasses types) |
+| 🧊 **3D Splatting** | ✅ Ready | Live Gaussian Splatting (±30° orbit) |
+| 🖥️ **Screen Sharing** | ✅ Ready | Share screen with track replacement |
+| 💬 **In-Meeting Chat** | ✅ Ready | Ephemeral socket-based messaging |
+| ⚙️ **Settings** | ✅ Ready | Glasses type, default mode, volume |
+| 📊 **Network Monitor** | ✅ Ready | Bandwidth/latency-based auto-downgrade |
+| 🔄 **ICE Restart** | ✅ Ready | Auto-reconnect on connection failure |
+
+## Scripts
+
+```bash
+npm run dev        # Client + Server
+npm run dev:all    # Client + Server + GPU Worker
+npm run build      # Production build
+npm run lint       # Lint all packages
+npm run test       # Run all tests
+npm run clean      # Clean all node_modules and build artifacts
+```
 
 ## Deployment
 
 ### Docker (production)
 
 ```bash
-# Build images
+# All services
+docker compose up
+
+# With GPU worker
+docker compose --profile gpu up
+
+# Or build individually
 docker build -t parallax-client ./client
 docker build -t parallax-server ./server
-
-# Run
-docker run -p 80:80 parallax-client
-docker run -p 4000:4000 --env-file server/.env parallax-server
+docker build -t parallax-gpu-worker ./gpu-worker
 ```
 
 ### GCP (target)
 
 - **Client**: Firebase Hosting (static SPA)
-- **Server**: Cloud Run (signaling + SFU)
+- **Server**: Cloud Run (signaling)
 - **TURN**: GCE VM with coturn (`infra/coturn/turnserver.conf`)
-- **GPU Worker**: GKE with T4 node pool (Phase 2+)
+- **GPU Worker**: GKE with T4 node pool
 
 ## License
 

@@ -9,10 +9,14 @@
   ],
   "scripts": {
     "dev": "concurrently \"npm run dev:client\" \"npm run dev:server\"",
+    "dev:all": "concurrently \"npm run dev:client\" \"npm run dev:server\" \"npm run dev:gpu\"",
     "dev:client": "npm run dev --workspace=client",
     "dev:server": "npm run dev --workspace=server",
+    "dev:gpu": "cd gpu-worker && python -m uvicorn src.main:app --reload --host 0.0.0.0 --port 8000",
     "build": "npm run build --workspace=client && npm run build --workspace=server",
-    "lint": "npm run lint --workspace=client && npm run lint --workspace=server"
+    "lint": "npm run lint --workspace=client && npm run lint --workspace=server",
+    "test": "npm run test --workspace=client && npm run test --workspace=server",
+    "clean": "rm -rf node_modules client/node_modules server/node_modules client/dist server/dist"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

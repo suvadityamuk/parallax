@@ -4,7 +4,7 @@ import { v4 as uuidv4 } from 'uuid';
 import './Landing.css';
 
 export function Landing() {
-  const { user, loading, signIn } = useAuth();
+  const { user, loading, signIn, signOut } = useAuth();
   const navigate = useNavigate();
 
   function handleNewMeeting() {
@@ -66,6 +66,14 @@ export function Landing() {
             </button>
             <img src={user.photoURL || ''} alt="" className="landing-avatar" />
             <span className="landing-user-name">{user.displayName}</span>
+            <button
+              className="btn btn-secondary"
+              onClick={signOut}
+              style={{ padding: '6px 12px', fontSize: '0.8rem', color: 'var(--accent-danger)' }}
+              title="Sign out"
+            >
+              Sign out
+            </button>
           </div>
         ) : null}
       </header>

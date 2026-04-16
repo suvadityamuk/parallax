@@ -1,0 +1,57 @@
+# Parallax — Full Stack Development
+#
+# Usage:
+#   docker compose up              # Start all services
+#   docker compose up client server  # Start without GPU worker
+#   docker compose --profile gpu up  # Include GPU worker
+
+services:
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    environment:
+      - VITE_SERVER_URL=http://localhost:4000
+    depends_on:
+      - server
+
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    ports:
+      - "4000:4000"
+    environment:
+      - PORT=4000
+      - CLIENT_URL=http://localhost:3000
+      - GPU_WORKER_URL=http://gpu-worker:8000
+    env_file:
+      - server/.env
+    depends_on: []
+
+  gpu-worker:
+    build:
+      context: ./gpu-worker
+      dockerfile: Dockerfile
+      target: dev
+    profiles:
+      - gpu
+    ports:
+      - "8000:8000"
+    environment:
+      - DEPTH_BACKEND=midas
+      - MIDAS_MODEL_TYPE=MiDaS_small
+      - HOST=0.0.0.0
+      - PORT=8000
+    env_file:
+      - gpu-worker/.env.example
+    # Uncomment for GPU passthrough:
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
