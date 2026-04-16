@@ -1,0 +1,105 @@
+/* ── SplatViewer ─────────────────────────────────────── */
+
+.splat-viewer-container {
+  position: absolute;
+  inset: 0;
+  border-radius: 16px;
+  overflow: hidden;
+  z-index: 5;
+  pointer-events: auto;
+}
+
+.splat-canvas {
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+  background: radial-gradient(ellipse at center, #0a0a1a 0%, #000000 100%);
+}
+
+.splat-canvas:active {
+  cursor: grabbing;
+}
+
+/* ── Loading shimmer ─────────────────────────────────── */
+
+.splat-shimmer {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  background: linear-gradient(135deg, rgba(10, 10, 26, 0.95), rgba(20, 10, 40, 0.95));
+  animation: splat-shimmer-bg 2s ease-in-out infinite;
+}
+
+@keyframes splat-shimmer-bg {
+  0%, 100% {
+    background: linear-gradient(135deg, rgba(10, 10, 26, 0.95), rgba(20, 10, 40, 0.95));
+  }
+  50% {
+    background: linear-gradient(135deg, rgba(20, 10, 40, 0.95), rgba(10, 20, 50, 0.95));
+  }
+}
+
+.splat-shimmer-text {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
+  letter-spacing: 0.5px;
+  animation: splat-pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes splat-pulse {
+  0%, 100% { opacity: 0.6; transform: scale(1); }
+  50% { opacity: 1; transform: scale(1.02); }
+}
+
+.splat-shimmer-icon {
+  font-size: 1.4rem;
+  animation: splat-icon-rotate 3s linear infinite;
+}
+
+@keyframes splat-icon-rotate {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* ── Rotation vignette ───────────────────────────────── */
+
+.splat-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 6;
+  background: radial-gradient(
+    ellipse at center,
+    transparent 50%,
+    rgba(0, 0, 0, 0.8) 100%
+  );
+  transition: opacity 0.15s ease;
+}
+
+/* ── Stats badge ─────────────────────────────────────── */
+
+.splat-stats {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(6px);
+  font-size: 0.7rem;
+  font-weight: 500;
+  color: rgba(255, 255, 255, 0.7);
+  z-index: 8;
+  font-variant-numeric: tabular-nums;
+}

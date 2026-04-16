@@ -1,0 +1,214 @@
+/* ── Settings Page ─────────────────────── */
+.settings {
+  min-height: 100vh;
+  background: var(--bg-primary);
+  padding: var(--space-6);
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-bottom: var(--space-8);
+}
+
+.settings-header h1 {
+  font-size: var(--font-size-2xl);
+  background: var(--gradient-primary);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  flex: 1;
+}
+
+.settings-saved {
+  font-size: var(--font-size-sm);
+  color: var(--accent-success);
+  animation: fadeInOut 2s ease-in-out;
+}
+
+@keyframes fadeInOut {
+  0% { opacity: 0; }
+  20% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.settings-content {
+  max-width: 640px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-6);
+}
+
+.settings-card {
+  background: var(--bg-glass);
+  backdrop-filter: blur(20px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+}
+
+.settings-card h2 {
+  font-size: var(--font-size-lg);
+  margin-bottom: var(--space-2);
+}
+
+.settings-description {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  margin-bottom: var(--space-4);
+}
+
+/* Profile */
+.settings-profile {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.settings-avatar {
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 2px solid var(--border-accent);
+}
+
+.settings-name {
+  font-weight: 600;
+  font-size: var(--font-size-md);
+}
+
+.settings-email {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+/* Glasses selector */
+.glasses-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-3);
+}
+
+.glasses-option {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  background: var(--bg-elevated);
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-base);
+  color: var(--text-primary);
+  font-family: inherit;
+}
+
+.glasses-option:hover {
+  border-color: var(--border-accent);
+  transform: translateY(-2px);
+}
+
+.glasses-option.active {
+  border-color: var(--accent-primary);
+  background: rgba(108, 92, 231, 0.1);
+  box-shadow: 0 0 16px rgba(108, 92, 231, 0.15);
+}
+
+.glasses-swatch {
+  display: flex;
+  gap: var(--space-2);
+}
+
+.glasses-swatch span {
+  width: 28px;
+  height: 20px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.glasses-label {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+}
+
+/* Mode options */
+.mode-options {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.mode-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  background: var(--bg-elevated);
+  border: 2px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-base);
+  color: var(--text-primary);
+  font-family: inherit;
+  text-align: left;
+}
+
+.mode-option:hover {
+  border-color: var(--border-accent);
+}
+
+.mode-option.active {
+  border-color: var(--accent-primary);
+  background: rgba(108, 92, 231, 0.1);
+}
+
+.mode-option-label {
+  font-weight: 600;
+  font-size: var(--font-size-md);
+  min-width: 100px;
+}
+
+.mode-option-desc {
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+}
+
+/* Volume */
+.volume-control {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+}
+
+.volume-slider {
+  flex: 1;
+  -webkit-appearance: none;
+  appearance: none;
+  height: 6px;
+  border-radius: 3px;
+  background: var(--bg-elevated);
+  outline: none;
+}
+
+.volume-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--accent-primary);
+  cursor: pointer;
+  box-shadow: 0 0 8px rgba(108, 92, 231, 0.4);
+}
+
+.volume-value {
+  font-size: var(--font-size-sm);
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 40px;
+  text-align: right;
+}

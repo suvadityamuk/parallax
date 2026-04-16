@@ -1,0 +1,220 @@
+/* ── Landing Page ──────────────────────── */
+.landing {
+  position: relative;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.landing-bg {
+  position: fixed;
+  inset: 0;
+  background: var(--gradient-mesh);
+  z-index: 0;
+}
+
+/* Floating orbs */
+.landing-orb {
+  position: fixed;
+  border-radius: 50%;
+  filter: blur(80px);
+  z-index: 0;
+  pointer-events: none;
+}
+
+.landing-orb--1 {
+  width: 500px;
+  height: 500px;
+  background: rgba(124, 92, 255, 0.12);
+  top: -100px;
+  left: -100px;
+  animation: float-orb 15s ease-in-out infinite;
+}
+
+.landing-orb--2 {
+  width: 400px;
+  height: 400px;
+  background: rgba(0, 212, 255, 0.08);
+  bottom: -50px;
+  right: -80px;
+  animation: float-orb 20s ease-in-out infinite reverse;
+}
+
+.landing-orb--3 {
+  width: 300px;
+  height: 300px;
+  background: rgba(255, 107, 202, 0.08);
+  top: 40%;
+  right: 20%;
+  animation: float-orb 18s ease-in-out infinite 5s;
+}
+
+@keyframes float-orb {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(30px, -20px) scale(1.05); }
+  66% { transform: translate(-20px, 15px) scale(0.95); }
+}
+
+/* Header */
+.landing-header {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-6) var(--space-8);
+}
+
+.landing-logo {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.landing-logo-text {
+  font-size: var(--font-size-xl);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.landing-user {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4) var(--space-2) var(--space-2);
+  background: var(--bg-glass);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+}
+
+.landing-avatar {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid var(--border-accent);
+}
+
+.landing-user-name {
+  font-size: var(--font-size-sm);
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+/* Hero */
+.landing-hero {
+  position: relative;
+  z-index: 10;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: var(--space-8);
+  gap: var(--space-12);
+}
+
+.landing-hero-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-6);
+  max-width: 640px;
+}
+
+.landing-title {
+  font-size: var(--font-size-hero);
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+}
+
+.landing-subtitle {
+  font-size: var(--font-size-lg);
+  color: var(--text-secondary);
+  max-width: 480px;
+  line-height: 1.6;
+}
+
+/* Actions */
+.landing-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+
+.landing-join-form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.landing-input {
+  padding: var(--space-3) var(--space-5);
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-pill);
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  font-size: var(--font-size-sm);
+  outline: none;
+  transition: border-color var(--transition-base);
+  width: 200px;
+}
+
+.landing-input::placeholder {
+  color: var(--text-muted);
+}
+
+.landing-input:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px rgba(124, 92, 255, 0.1);
+}
+
+/* Features */
+.landing-features {
+  display: flex;
+  gap: var(--space-4);
+}
+
+.feature-pill {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-5);
+  background: var(--bg-glass);
+  backdrop-filter: blur(12px);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-pill);
+  font-size: var(--font-size-sm);
+  color: var(--text-secondary);
+  transition: all var(--transition-base);
+}
+
+.feature-pill:hover {
+  border-color: var(--border-accent);
+  color: var(--text-primary);
+  transform: translateY(-2px);
+}
+
+.feature-pill-icon {
+  font-size: var(--font-size-lg);
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .landing-title {
+    font-size: var(--font-size-3xl);
+  }
+
+  .landing-actions {
+    flex-direction: column;
+  }
+
+  .landing-features {
+    flex-direction: column;
+  }
+}
